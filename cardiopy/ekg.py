@@ -123,6 +123,7 @@ class EKG:
             if detect_peaks == True:
                 broad_up, up_diff, broad_mw, mw_diff, broad_sm, sm_diff = self.prep(mw_size_opt, upshift_opt, sm_wn_opt)
                 ibi_range = self.num_beats(hb_range)
+               
                 up_precisetest, mw_precisetest, sm_precisetest, no_low_smooth, final_round, end = self.broad_test(fname, fpath, min_ibi, max_ibi, detect_peaks, ibi_range, broad_up, rm_artifacts, smooth, broad_mw, up_diff, mw_diff, broad_sm, sm_diff,  final_round = False, zero_val = False, no_peak_count = 0)
             """ if final_round == False and end == False:
                     self.precise_test1(fname, fpath, min_ibi, max_ibi, detect_peaks, smooth, up_precisetest, mw_precisetest, sm_precisetest, no_low_smooth, final_round, end)
@@ -265,6 +266,7 @@ class EKG:
                 whether peaks should be detected
         """
         self.param_condit= [] # this list will contain lists of the parameters tested and the approximate false detection rate for each
+        self.abnormal_ibi = [] #empty list that will have the conditions that lead to the number of ibis deemed abnormal
         end = False # a way to stop the program
         test_count = 0 # counter of number of tests that were run
         brk = False # dont break
@@ -277,7 +279,7 @@ class EKG:
                         test_count = test_count + 1 #increase counter
                         self.rms_smooth(sm_wn = sm)
                         self.calc_RR(smooth, mw, up, rm_artifacts, final_round)
-                        zero_val, no_peak_count, final_round = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round, sm)
+                        zero_val, no_peak_count, final_round, abnormal_ibi = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round, sm)
                         if zero_val == True:
                             brk = True
                 else:
@@ -285,27 +287,10 @@ class EKG:
                         break
                     test_count = test_count + 1 #increase counter
                     self.calc_RR(smooth, mw, up, rm_artifacts, final_round)
-                    zero_val, no_peak_count, final_round = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round)
+                    zero_val, no_peak_count, final_round, abnormal_ibi = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round)
                     if zero_val == True:
                         brk = True
-        
-        if len(self.param_condit) == 0 and test_count != no_peak_count: #if param_condit list is empty (the number of IBIS was never within the appropriate range) and they were not all no peak detections
-            print("Abnormal number of beats detected with all combinations of parameters tested. Plot data using plotpeaks method to check raw data.")
-
-        if test_count == no_peak_count: #if they were all no peak detections
-            print("No peaks were detected with any of these parameters. Plot data using plotpeaks method to check raw data.")
-
-        if len(self.param_condit) == 0: #give them the option to still move forward to precise testing if they choose
-            run_precise = input('Do you still want to run the more precise test? [y/n]')
-            print('\n')
-            if run_precise != 'y' or 'n':
-                print('please enter y or n')
-                run_precise = input('Do you still want to run the more precise test? [y/n]')
-                print('\n')   
-            if run_precise == 'y':
-                final_round = False
-            if run_precise == 'n':
-                end = True
+        final_round, end = self.abnormal(test_count, no_peak_count, final_round, end)
         if end == True or zero_val == True: #set these variables that are expected to be returned to none so that they can be returned
                 manual_low_up1 = None
                 manual_low_mw1 = None
@@ -317,33 +302,18 @@ class EKG:
                 no_low_smooth = None
 
         if end == False:
-            min_err = min(i[-1] for i in self.param_condit) #get the minimum "approxparam"
-            for lst in self.param_condit:
-                if min_err in lst: # if the minimum error is in the list within the lists of param condit
-                    indx = self.param_condit.index(lst) # get the index number of that list
-            optimal = self.param_condit[indx] #set optimal as the list containing the set of conditions and the approximate false detection rate
-            if zero_val == True: # if there was a 0 percent false rate then print the parameters that lead to that
-                if smooth == False:
-                    print("The optimal upshift is " + str(optimal[0]) + "%." + " The optimal moving window size is " + str(optimal[1]) + " ms. This gave an approximate false detection rate of " + str(optimal[-1]) + "%")
-                else:
-                    print("The optimal upshift is " + str(optimal[0]) + "%." + " The optimal moving window size is " + str(optimal[1]) + " ms. The optimal smoothing window is " + str(optimal[2]) + " ms. This gave an approximate false detection rate of " + str(optimal[-1]) + "%")
-            else: # if will run precise test
-                # give each optimal paramater a variable for clarity
-                optml_up1 = optimal[0]
-                optml_mw1 = optimal[1]
-                if smooth == True:
-                    optml_sm1 = optimal[2]
-                else:
-                    optml_sm1 = None
-
+            optml_up1, optml_mw1, optml_sm1 = self.find_optimal(zero_val, smooth, abnormal_ibi, ibi_range)
+            if zero_val == False: #If will run precise
                 # default set that manual input low bounds arent happening
                 manual_low_up1 = False
                 manual_low_mw1 = False
                 manual_low_sm1 = False
 
                 if smooth == True and len(self.metadata['testing_info']['sm_wn']) != 1:
-                    #find minimum of smoothing windows in param condit
-                    min_sm = min(i[2] for i in self.param_condit)
+                    if len(self.param_condit) != 0:
+                        min_sm = min(i[2] for i in self.param_condit)
+                    if len(self.param_condit) == 0:
+                        min_sm = min(self.metadata['testing_info']['sm_wn'])
                     if optml_sm1 != min_sm: # if the optimal isnt the minimum of smoothing windows in param condit. not min of all smoothing windows because some may have been tested and not added to param condit because ibis werent right.
                         print('The optimal smoothing window was determined to be {}, which is not the smallest option.'.format(self.optml_sm1))
                         print('The larger the smoothing window the less precise the R peak detections.')
@@ -422,22 +392,22 @@ class EKG:
                         if low_sm_test > 0: #no harm in a low smoothing window
                             sm_precisetest = [low_sm_test, high_sm_test]
                         else: # if less than 0 wont work or if 0 then do they want no smooth?
-                            is_low_up_bound = input('Current unprecise optimal smoothing window detection is {}%. Calculated lower value for further testing is {}%, which is below zero.  Do you want to test more precisely around a value lower than the current optimal detection? [y/n]'.format(optml_up1, low_up_test))
+                            is_low_sm_bound = input('Current unprecise optimal smoothing window detection is {}%. Calculated lower value for further testing is {}%, which is at or below zero.  Do you want to test more precisely around a value lower than the current optimal detection? [y/n]'.format(optml_sm1, low_sm_test))
                             print('\n')
-                            if is_low_up_bound == 'y': #give option to set lower bound 
-                                low_up_bound = float(input('What lower value do you want to test around? (Must be greater than 0 and less than the current optimal detection of {}.) [number]'.format(optml_up1)))
+                            if is_low_sm_bound == 'y': #give option to set lower bound 
+                                low_sm_bound = float(input('What lower value do you want to test around? (Must be greater than 0 and less than the current optimal detection of {}.) [number]'.format(optml_sm1)))
                                 print('\n')
-                                up_precisetest = [low_up_bound, high_up_test] #use this lower bound
-                                manual_low_up1 = True
-                            if is_low_up_bound == 'n': #give option to do no smooth
+                                sm_precisetest = [low_sm_bound, high_sm_test] #use this lower bound
+                                manual_low_sm1 = True
+                            if is_low_sm_bound == 'n': #give option to do no smooth
                                 does_smooth = input('Do you want to test no smoothing as well as your larger precise smoothing window? [y/n]')
-                                up_precisetest = [high_up_test] #the upper test will be there either way
-                                if no_smooth == 'y': #if they  want to try a no smooth
-                                    no_low_smooth == True #test a no smoothintg as the lower bound for precise """
+                                sm_precisetest = [high_sm_test] #the upper test will be there either way
+                                if does_smooth == 'y': #if they  want to try a no smooth
+                                    no_low_smooth == True #test a no smoothintg as the lower bound for precise 
                 else:
                     sm_precisetest = None
                     no_low_smooth = None
-        return up_precisetest, mw_precisetest, sm_precisetest, no_low_smooth, final_round, end
+        return up_precisetest, mw_precisetest, sm_precisetest, no_low_smooth, final_round, end 
     def paramcondit(self, min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round, sm = None):
         prob_false = [] #empty list that will contain the ibi's that are unlikely to be real
         zero_val = False  #if the approximate false detection rate is zero then loop will stop. No need to keep testing if no false detections
@@ -452,9 +422,115 @@ class EKG:
             if approxparam == 0:
                 zero_val = True #there was a zero val for approx parameter
                 final_round = True
+        else: #if weird number of ibis
+            self.abnormal_ibi.append([up, mw, sm, len(self.rr)])
         if len(self.rr) == 0: # if no peaks were detected add to the no peak count
             no_peak_count = no_peak_count + 1
-        return zero_val, no_peak_count, final_round
+        return zero_val, no_peak_count, final_round, self.abnormal_ibi
+    def find_optimal(self, zero_val, smooth, abnormal_ibi, ibi_range):    
+        if len(self.param_condit) == 0: 
+            frm_range = [] #will be a list of the distance the number of abnormal ibis is from the acceptable range of ibis
+            for ls in abnormal_ibi:
+                frm_range.append([ls[-1], abs(ls[-1] - ibi_range[0])])
+                frm_range.append([ls[-1], abs(ls[-1] - ibi_range[-1])])
+                min_rng = min(i[-1] for i in frm_range)
+                for l in frm_range:
+                    if min_rng in l:
+                        idx = l.index(min_rng)
+                        min_abnml= frm_range[idx] 
+                if min_abnml[0] in ls:
+                    indx = abnormal_ibi.index(ls)
+                    min_abnml_ls = abnormal_ibi[indx]
+            if smooth == False:
+                print(("Precise test will occur around an upshift of {} and a moving window of {} because {} ibis (closest to ibi range input) were detected with these parameters").format(min_abnml_ls[0], min_abnml_ls[1], min_abnml_ls[-1]))
+                optml_sm1 = None
+            if smooth == True:
+                print(("Precise test will occur around an upshift of {}, a moving window of {} and a smoothing window of {} because {} ibis (closest to ibi range input) were detected with these parameters").format(min_abnml_ls[0], min_abnml_ls[1], min_abnml_ls[2], min_abnml_ls[-1]))
+                optml_sm1 = min_abnml_ls[2]
+            optml_up1 = min_abnml_ls[0]
+            optml_mw1 = min_abnml_ls[1]
+        else:
+            min_err = min(i[-1] for i in self.param_condit) #get the minimum "approxparam"
+            for lst in self.param_condit:
+                if min_err in lst: # if the minimum error is in the list within the lists of param condit
+                    indx = self.param_condit.index(lst) # get the index number of that list
+            optimal = self.param_condit[indx] #set optimal as the list containing the set of conditions and the approximate false detection rate
+            if zero_val == True: # if there was a 0 percent false rate then print the parameters that lead to that
+                if smooth == False:
+                    print("The optimal upshift is " + str(optimal[0]) + "%." + " The optimal moving window size is " + str(optimal[1]) + " ms. This gave an approximate false detection rate of " + str(optimal[-1]) + "%")
+                else:
+                    print("The optimal upshift is " + str(optimal[0]) + "%." + " The optimal moving window size is " + str(optimal[1]) + " ms. The optimal smoothing window is " + str(optimal[2]) + " ms. This gave an approximate false detection rate of " + str(optimal[-1]) + "%")
+                optml_up1 = None
+                optml_mw1 = None
+                optml_sm1 = None
+            else: # if will run precise test
+                # give each optimal paramater a variable for clarity
+                optml_up1 = optimal[0]
+                optml_mw1 = optimal[1]
+                if smooth == True:
+                    optml_sm1 = optimal[2]
+                else:
+                    optml_sm1 = None
+        return optml_up1, optml_mw1, optml_sm1
+    def abnormal(self, test_count, no_peak_count, final_round, end):
+        if len(self.param_condit) == 0 and test_count != no_peak_count: #if param_condit list is empty (the number of IBIS was never within the appropriate range) and they were not all no peak detections
+            print("Abnormal number of beats detected with all combinations of parameters tested. Plot data using plotpeaks method to check raw data.")
+
+        if test_count == no_peak_count: #if they were all no peak detections
+            print("No peaks were detected with any of these parameters. Plot data using plotpeaks method to check raw data.")
+
+        if len(self.param_condit) == 0: #give them the option to still move forward to precise testing if they choose
+            run_precise = input('Do you still want to run the more precise test? [y/n]')
+            print('\n')
+            options = ['y', 'n']
+            if not run_precise in options:
+                print('please enter y or n')
+                run_precise = input('Do you still want to run the more precise test? [y/n]')
+                print('\n')   
+            if run_precise == 'y':
+                final_round = False
+            if run_precise == 'n':
+                end = True
+        return final_round, end
+    def precise_test1(self, fname, fpath, min_ibi, max_ibi, detect_peaks, smooth, up_precisetest, mw_precisetest, sm_precisetest, no_low_smooth, final_round, end): 
+        """ The function to run a more precise test of R peak detections using combinations of moving window and upshift parameters determined in broad_test and determine where to test more precisely.
+
+        Parameters:
+            fname : str
+                file name
+            fpath : str
+                path to file
+            min_ibi : float (default: 500)
+                minimum IBI length in ms
+            max_ibi : float (default: 1400)
+                maximum IBI length in ms
+            detect_peaks : bool (default: True)
+                whether peaks should be detected
+        """
+        test_count = 0 # counter of number of tests that were run
+        brk = False # dont break
+        for up in up_precisetest:
+            for mw in mw_precisetest:
+                if smooth == True: # if smoothing go this way 
+                    for sm in sm_precisetest:
+                        if brk == True:
+                            break
+                        test_count = test_count + 1 #increase counter
+                        self.rms_smooth(sm_wn = sm)
+                        self.calc_RR(smooth, mw, up, rm_artifacts, final_round)
+                        zero_val, no_peak_count, final_round = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round, sm)
+                        if zero_val == True:
+                            brk = True
+                else:
+                    if brk == True:
+                        break
+                    test_count = test_count + 1 #increase counter
+                    self.calc_RR(smooth, mw, up, rm_artifacts, final_round)
+                    zero_val, no_peak_count, final_round = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round)
+                    if zero_val == True:
+                        brk = True
+        final_round, end = self.abnormal(test_count, no_peak_count, final_round, end)
+
 
     def rms_smooth(self, sm_wn):
         """ Smooth raw data with RMS moving window """
