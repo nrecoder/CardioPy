@@ -124,7 +124,7 @@ class EKG:
                 broad_up, up_diff, broad_mw, mw_diff, broad_sm, sm_diff = self.prep(mw_size_opt, upshift_opt, sm_wn_opt)
                 ibi_range = self.num_beats(hb_range)
                
-                up_precisetest, mw_precisetest, sm_precisetest, manual_low_up, manual_low_mw, manual_low_sm, no_low_smooth, final_round, end, no_retest = self.broad_test(fname, fpath, min_ibi, max_ibi, detect_peaks, ibi_range, broad_up, rm_artifacts, smooth, broad_mw, up_diff, mw_diff, broad_sm, sm_diff,  final_round = False, zero_val = False, no_peak_count = 0, test_count = 0)
+                up_precisetest, mw_precisetest, sm_precisetest, manual_low_up, manual_low_mw, manual_low_sm, no_low_smooth, final_round, end, no_retest = self.broad_test(fname, fpath, min_ibi, max_ibi, detect_peaks, ibi_range,  rm_artifacts, smooth,  up_diff, mw_diff,  sm_diff, final_round, zero_val, no_peak_count, test_count, up_opt, mw_opt, sm_opt, lap = 1)
             """ if final_round == False and end == False:
                     self.precise_test1(fname, fpath, min_ibi, max_ibi, detect_peaks, smooth, up_precisetest, mw_precisetest, sm_precisetest, no_low_smooth, final_round, end, no_retest)
                 if self.run_precise2 == True:
@@ -246,7 +246,7 @@ class EKG:
         beat_range = [min_beats, max_beats] #set the plausible number of beats range as a list
         ibi_range = [min_beats -1, max_beats -1] #set the plausible number of ibis range as a list
         return ibi_range
-    def broad_test(self, fname, fpath, min_ibi, max_ibi, detect_peaks, ibi_range, broad_up, rm_artifacts, smooth, broad_mw, up_diff = None,  mw_diff = None, broad_sm = None, sm_diff = None,  final_round = False, zero_val = False, no_peak_count = 0, test_count = 0):
+    def broad_test(self, fname, fpath, min_ibi, max_ibi, detect_peaks, ibi_range, rm_artifacts, smooth, up_diff = None,  mw_diff = None,  sm_diff = None, final_round = False, zero_val = False, no_peak_count = 0, test_count = 0, up_opt = broad_up, mw_opt = broad_mw, sm_opt = broad_sm, lap = 1):
         """ The function to run an initial test of R peak detections using combinations of moving window and upshift parameters and determine where to test more precisely.
 
         Parameters:
@@ -265,15 +265,17 @@ class EKG:
             detect_peaks : bool (default: True)
                 whether peaks should be detected
         """
-        self.param_condit= [] # this list will contain lists of the parameters tested and the approximate false detection rate for each
-        abnormal_ibi = [] #empty list that will have the conditions that lead to the number of ibis deemed abnormal
-        no_retest = [] #empty list that will contain all parameters tested so we dont retest them
-        end = False # a way to stop the program if there are abnormal number of beats detected but the user doesn't want to run precise test
-        brk = False # dont break
-        for up in broad_up:
-            for mw in broad_mw:
+        if lap == 1: 
+            self.param_condit= [] # this list will contain lists of the parameters tested and the approximate false detection rate for each
+            abnormal_ibi = [] #empty list that will have the conditions that lead to the number of ibis deemed abnormal
+            no_retest = [] #empty list that will contain all parameters tested so we dont retest them
+            end = False # a way to stop the program if there are abnormal number of beats detected but the user doesn't want to run precise test
+            brk = False # dont break
+
+        for up in up_opt:
+            for mw in mw_opt:
                 if smooth == True: # if smoothing go this way 
-                    for sm in broad_sm:
+                    for sm in sm_opt:
                         if brk == True:
                             break
                         self.rms_smooth(sm_wn = sm)
@@ -284,31 +286,39 @@ class EKG:
                 else:
                     if brk == True:
                         break
-                    self.calc_RR(smooth, mw, up, rm_artifacts, final_round)
+                    self.calc_RR(smooth, mw, up, final_round)
                     zero_val, no_peak_count, final_round, abnormal_ibi, no_retest, test_count = self.paramcondit(min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round, no_retest, test_count, abnormal_ibi)
                     if zero_val == True:
                         brk = True
         final_round, end = self.abnormal(test_count, no_peak_count, final_round, end)
-        if end == True or zero_val == True: #set these variables that are expected to be returned to none so that they can be returned
-            up_precisetest = None
-            mw_precisetest = None
-            sm_precisetest = None
-            no_low_smooth = None
+        if lap == 1:
+            if end == True or zero_val == True: #set these variables that are expected to be returned to none so that they can be returned
+                up_precisetest = None
+                mw_precisetest = None
+                sm_precisetest = None
+                no_low_smooth = None
+
+        if final_round == True:
+            # create empy series for false detections removed and missed peaks added
+            self.rpeak_artifacts = pd.Series()
+            self.rpeaks_added = pd.Series()
+            self.ibi_artifacts = pd.Series()
 
         if end == False:
-            up_precisetest, mw_precisetest, sm_precisetest, manual_low_up, manual_low_mw, manual_low_sm, no_low_smooth = self.precise_prep(zero_val, smooth, abnormal_ibi, ibi_range, up_diff, mw_diff, sm_diff)
-        print(up_precisetest, mw_precisetest, sm_precisetest, manual_low_up, manual_low_mw, manual_low_sm, no_low_smooth, final_round, end, no_retest)   
+            up_precisetest, mw_precisetest, sm_precisetest, manual_low_up, manual_low_mw, manual_low_sm, no_low_smooth = self.precise_prep(zero_val, smooth, abnormal_ibi, ibi_range, up_diff, mw_diff, sm_diff, lap = lap)
+            if zero_val == False:
+                self.broad_test(fname, fpath, min_ibi, max_ibi, detect_peaks, ibi_range,  rm_artifacts, smooth,  up_diff, mw_diff,  sm_diff, final_round, zero_val, no_peak_count, test_count, up_opt = up_precisetest, mw_opt = mw_precisetest, sm_opt = sm_precisetest, lap = 2)  
         return up_precisetest, mw_precisetest, sm_precisetest, manual_low_up, manual_low_mw, manual_low_sm, no_low_smooth, final_round, end, no_retest
-    def precise_prep(self, zero_val, smooth, abnormal_ibi, ibi_range, up_diff, mw_diff, sm_diff):
+    def precise_prep(self, zero_val, smooth, abnormal_ibi, ibi_range, up_diff, mw_diff, sm_diff, lap):
         optml_up1, optml_mw1, optml_sm1 = self.find_optimal(zero_val, smooth, abnormal_ibi, ibi_range)
         if zero_val == False: #If will run precise
             if smooth == True and len(self.metadata['testing_info']['sm_wn']) != 1:
                 optml_sm1 = self.small_sm(optml_sm1)  
             #for upshift set where you will test more precisely
-            low_up_test, high_up_test, up_precisetest = self.defn_prec_tst(run_for = 'upshift', optml_1 = optml_up1, diff = up_diff, which_prec = 1)
-            low_mw_test, high_mw_test, mw_precisetest = self.defn_prec_tst(run_for = 'mw_size', optml_1 = optml_mw1, diff = mw_diff, which_prec = 1)
+            low_up_test, high_up_test, up_precisetest = self.defn_prec_tst(lap = lap, run_for = 'upshift', optml_1 = optml_up1, diff = up_diff)
+            low_mw_test, high_mw_test, mw_precisetest = self.defn_prec_tst(lap = lap, run_for = 'mw_size', optml_1 = optml_mw1, diff = mw_diff)
             if smooth == True:
-                low_sm_test, high_sm_test, sm_precisetest = self.defn_prec_tst(run_for = 'sm_wn', optml_1 = optml_sm1, diff = sm_diff, which_prec = 1)
+                low_sm_test, high_sm_test, sm_precisetest = self.defn_prec_tst(lap, run_for = 'sm_wn', optml_1 = optml_sm1, diff = sm_diff)
 
             #check if numbers determined are in reasonable bounds and make the precise test if there was more than one input
             up_precisetest, manual_low_up, no_low_smooth = self.bounds(run_for = 'upshift', low_test = low_up_test, optml_1 = optml_up1, high_test = high_up_test, limit = 0.5)
@@ -371,15 +381,32 @@ class EKG:
             if lrg_sm == 'n':
                 optml_sm1 = min_sm
         return optml_sm1
-    def defn_prec_tst(self, run_for, optml_1, diff, which_prec):
+    def defn_prec_tst(self, lap, run_for, optml_1, diff, precisetest):
         if len(self.metadata['testing_info'][run_for]) == 2: # if multiple options were given
-            low_test = optml_1 - (diff/2 * (which_prec)) # test precisely halfway above and below the upshift that gave the optimal detection (if 1,3,5 input and 5 deemed best will test 4 and 6) for first test and a quarter of eh way for second test
-            high_test = optml_1 + (diff/2 * (which_prec)) # up diff is from before the difference between the numbers given
+            low_test = optml_1 - (diff/2 * (lap)) # test precisely halfway above and below the upshift that gave the optimal detection (if 1,3,5 input and 5 deemed best will test 4 and 6) for first test and a quarter of eh way for second test
+            high_test = optml_1 + (diff/2 * (lap)) # up diff is from before the difference between the numbers given
             precisetest = None
+        if lap 2:
+            if manual_low == True and optml_1 == precisetest[0]: #if manually lower bound set, and the mw which gave best detection is that manually input lower bound 
+                potential_low = (precisetest[0] - (optml_1 - precisetest[0])/2) #take halfway between the optimal mw determined in broad test (probably 1, the lowest input) and the manually determined low bound for precise test and then subtract that from the manual low bound to get this potential value
+                high_mw_test = precisetest[0] + (optml_1 - precisetest[0])/2 #higher test set as halfway between the manual low value deemed optimal and the previous value deemed optimal
+                if potential_low > 0: # if the potential value is greater than 0 you can use it
+                    low_test = potential_low
+                    precisetest = [low_test, optml1, high_test]
+                else: #if not just dont use a lower test you have gone low enough
+                    if run_for = 'mw_size':
+                        nxt = 'moving window'
+                    if run_for = 'upshift':
+                        nxt = 'upshift'
+                    else:
+                        nxt = 'smoothing window'
+                    print("Value to be used as the lower test of the next {} precise test calculated to be {} which is below zero and too low to continue. Will test more precisely with upper value only.".format(nxt, potential_low))
+                    precisetest = [optml1, high_test]
         if len(self.metadata['testing_info'][run_for]) == 1: # if only one was given that was the best one so use that
             precisetest = [optml_1]
             low_test = None
             high_test = None
+
         return low_test, high_test, precisetest
     def paramcondit(self, min_ibi, max_ibi, ibi_range, up, mw, no_peak_count, final_round, no_retest, test_count, abnormal_ibi, sm = None):
         prob_false = [] #empty list that will contain the ibi's that are unlikely to be real
@@ -512,7 +539,7 @@ class EKG:
 
         print('Data smoothed with smoothing window of {} ms.'.format(sm_wn)) 
 
-    def set_Rthres(self, smooth, mw_size, upshift, final_round = False):
+    def set_Rthres(self, smooth, mw_size, upshift):
         """ set R peak detection threshold based on moving average + %signal upshift """
         print('Calculating moving average with {} ms window and a {}% upshift...'.format(mw_size, upshift))
         
@@ -532,14 +559,7 @@ class EKG:
         upshift_mult = 1 + upshift/100
         det_thres = mavg*upshift_mult
 
-        
         self.data.insert(1, 'EKG_thres', det_thres) # can remove this for speed, just keep as series
-
-        if final_round == True:
-            # create empy series for false detections removed and missed peaks added
-            self.rpeak_artifacts = pd.Series()
-            self.rpeaks_added = pd.Series()
-            self.ibi_artifacts = pd.Series()
 
     def detect_Rpeaks(self, smooth, final_round):
         """ detect R peaks from raw signal """
@@ -908,17 +928,13 @@ class EKG:
                 self.rpeaks_df['ibi_ms'] = ibi
                 print('R peaks dataframe updated.\nDone.')
 
-    def calc_RR(self, smooth, mw_size, upshift, rm_artifacts, final_round):
+    def calc_RR(self, smooth, mw_size, upshift,final_round):
         """ Detect R peaks and calculate R-R intervals """
         
         # set R peak detection parameters
-        self.set_Rthres(smooth, mw_size, upshift, final_round)
+        self.set_Rthres(smooth, mw_size, upshift)
         # detect R peaks & make RR tachogram
         self.detect_Rpeaks(smooth, final_round)
-        # remove artifacts
-        if rm_artifacts == True:
-            self.rm_artifacts()
-
     def export_RR(self, savedir):
         """ Export R peaks and RR interval data to .txt files """
 
